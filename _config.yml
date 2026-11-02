@@ -1,3 +1,4 @@
+# Only used by the legacy Jekyll build; the Actions workflow copies files itself.
 # Jekyll skips dot folders; Tesla Fleet needs this one served.
 include:
   - .well-known

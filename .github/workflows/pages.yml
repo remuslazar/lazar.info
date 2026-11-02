@@ -1,0 +1,57 @@
+name: Deploy lazar.info
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    # Pick up new Medium posts.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp index.html 404.html CNAME _site/
+          # Tesla Fleet (Home Assistant on odroid4) reads the public key here.
+          cp -R .well-known _site/
+
+      - name: Fetch Medium posts
+        run: python3 scripts/fetch_posts.py _site/posts.json
+
+      - name: Check the Tesla key is in the site
+        run: cmp .well-known/appspecific/com.tesla.3p.public-key.pem _site/.well-known/appspecific/com.tesla.3p.public-key.pem
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Check the live Tesla key
+        run: |
+          sleep 20
+          curl -fsS "https://lazar.info/.well-known/appspecific/com.tesla.3p.public-key.pem?run=${{ github.run_id }}" | grep -q -- "-----BEGIN PUBLIC KEY-----"

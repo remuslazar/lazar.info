@@ -69,6 +69,7 @@
     li .sub { grid-column: 1; }
     ul.kv li { grid-template-columns: 5.5em 1fr; }
   }
+  .new { color: var(--yellow); margin-left: .6em; }
   .cursor {
     display: inline-block; width: .6em; height: 1.15em;
     background: var(--green); vertical-align: text-bottom;
@@ -104,7 +105,7 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
 
     <section class="block">
       <div class="line"><span class="ps1">remus@lazar.info:<b>~</b>$</span> <span class="cmd">ls -t ~/writing | head -5</span></div>
-      <ul>
+      <ul id="posts">
         <li><span class="dim">2026-10-26</span><a href="https://levelup.gitconnected.com/the-refactor-i-did-not-do-f073971fd86c">The Refactor I Did Not Do</a><span class="sub">A project I wanted to contribute to has rules about AI.</span></li>
         <li><span class="dim">2026-10-07</span><a href="https://levelup.gitconnected.com/the-skill-i-am-not-sure-i-still-have-73f5bad4c774">The Skill I Am Not Sure I Still Have</a><span class="sub">I let the machine write the code. What does that cost me?</span></li>
         <li><span class="dim">2026-09-30</span><a href="https://levelup.gitconnected.com/the-test-data-i-did-not-write-f4432b49ebec">The Test Data I Did Not Write</a><span class="sub">A green test suite kept a design flaw alive for fourteen months.</span></li>
@@ -164,9 +165,53 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
     return s.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
   }
 
+  // posts.json is written every few hours from the Medium feed by the
+  // deploy workflow. The list in the HTML above is the fallback.
+  var posts = [];
+  function postItem(p) {
+    var li = document.createElement('li');
+    var d = document.createElement('span');
+    d.className = 'dim';
+    d.textContent = p.date;
+    var a = document.createElement('a');
+    a.href = p.url;
+    a.textContent = p.title;
+    li.appendChild(d);
+    li.appendChild(a);
+    if (Date.now() - Date.parse(p.date) < 14 * 864e5) {
+      var n = document.createElement('span');
+      n.className = 'new';
+      n.textContent = '[new]';
+      a.appendChild(n);
+    }
+    if (p.subtitle) {
+      var s = document.createElement('span');
+      s.className = 'sub';
+      s.textContent = p.subtitle;
+      li.appendChild(s);
+    }
+    return li;
+  }
+  fetch('/posts.json', { cache: 'no-cache' })
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function (data) {
+      posts = (data.posts || []).filter(function (p) { return /^https:\/\//.test(p.url) && p.title && p.date; });
+      if (!posts.length) return;
+      var ul = document.getElementById('posts');
+      ul.textContent = '';
+      posts.slice(0, 5).forEach(function (p) { ul.appendChild(postItem(p)); });
+    })
+    .catch(function () {});
+
   var commands = {
     help: function () {
-      print('commands: <span class="y">whoami ls medium linkedin x devto github date uname clear</span>');
+      print('commands: <span class="y">whoami ls posts medium linkedin x devto github date uname clear</span>');
+    },
+    posts: function () {
+      if (!posts.length) { print('posts: feed not loaded, see <span class="y">medium</span>'); return; }
+      var ul = document.createElement('ul');
+      posts.forEach(function (p) { ul.appendChild(postItem(p)); });
+      out.appendChild(ul);
     },
     whoami: function () { print('Remus Lazar. Mostly harmless.'); },
     ls: function () { print('<span class="m">writing/</span>  <span class="m">links/</span>  about.txt'); },
@@ -193,7 +238,8 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
     hint.classList.add('hidden');
     if (!raw) return;
     print('<span class="ps1">remus@lazar.info:<b>~</b>$</span> ' + esc(raw));
-    var c = raw.toLowerCase().replace(/^sudo\s.*/, 'sudo').replace(/^dev\.to$/, 'devto');
+    var c = raw.toLowerCase().replace(/^sudo\s.*/, 'sudo').replace(/^dev\.to$/, 'devto')
+      .replace(/^ls( -\w+)? +(~\/)?writing\/?$/, 'posts');
     if (commands[c]) commands[c]();
     else print('bash: ' + esc(raw.split(/\s+/)[0]) + ': command not found. Try <span class="y">help</span>.');
     window.scrollTo(0, document.body.scrollHeight);
