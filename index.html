@@ -51,6 +51,7 @@
   .bar span { margin-left: auto; margin-right: auto; }
   .screen { padding: 18px 20px 24px; overflow-wrap: anywhere; }
   .line { white-space: pre-wrap; }
+  .table { white-space: pre; overflow-x: auto; }
   .block { margin: 0 0 1.1em; }
   .ps1 { color: var(--green); }
   .ps1 b { color: var(--cyan); font-weight: normal; }
@@ -203,9 +204,42 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
     })
     .catch(function () {});
 
+  // Uptime counts from birth: 1972-08-21, 0:15 German time (UTC+1, no summer
+  // time then).
+  function boot(year) { return Date.UTC(year, 7, 20, 23, 15); }
+  var login = new Date();
+  function upline() {
+    var m = Math.floor((Date.now() - boot(1972)) / 6e4);
+    return new Date().toTimeString().slice(0, 8) + ' up ' + Math.floor(m / 1440) + ' days, ' +
+      Math.floor(m / 60) % 24 + ':' + ('0' + m % 60).slice(-2) + ',  2 users,  load average: 0.42, 0.37, 0.35';
+  }
+
+  // What help lists, in order. The jokes stay unlisted.
+  var help = [
+    ['whoami', 'who is this'],
+    ['ls', 'list the files'],
+    ['posts', 'list all posts']
+  ].concat(Object.keys(links).map(function (k) {
+    return [k, 'open ' + links[k].replace(/^https:\/\/(www\.)?|\/$/g, '')];
+  }), [
+    ['date', 'print the date'],
+    ['uname', 'print system information, -a for all of it'],
+    ['uptime', 'tell how long the system has been running'],
+    ['w', 'show who is logged in and what they are doing'],
+    ['clear', 'clear the screen'],
+    ['reset', 'start over from the first screen']
+  ]);
+
   var commands = {
     help: function () {
-      print('commands: <span class="y">whoami ls posts medium linkedin x devto github date uname clear</span>');
+      var ul = document.createElement('ul');
+      ul.className = 'kv';
+      help.forEach(function (h) {
+        var li = document.createElement('li');
+        li.innerHTML = '<span class="y">' + h[0] + '</span><span>' + esc(h[1]) + '</span>';
+        ul.appendChild(li);
+      });
+      out.appendChild(ul);
     },
     posts: function () {
       if (!posts.length) { print('posts: feed not loaded, see <span class="y">medium</span>'); return; }
@@ -216,10 +250,26 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
     whoami: function () { print('Remus Lazar. Mostly harmless.'); },
     ls: function () { print('<span class="m">writing/</span>  <span class="m">links/</span>  about.txt'); },
     date: function () { print(new Date().toString()); },
-    uname: function () { print('RemusOS 1.0 lazar.info (caffeine-driven) arm64, uptime: since the 80s'); },
+    uname: function (opts) {
+      if (!/\s-(-all|[a-z]*a)/.test(opts)) { print('RemusOS'); return; }
+      var now = Date.now(), y = new Date(now).getUTCFullYear();
+      if (boot(y) > now) y--;
+      var d = Math.floor((now - boot(y)) / 864e5);
+      print('RemusOS lazar.info 1.0-caffeine-driven #1 SMP Mon Aug 21 00:15:00 CET 1972 arm64, uptime: ' +
+        (y - 1972) + ' years, ' + d + (d === 1 ? ' day' : ' days'));
+    },
+    uptime: function () { print(upline()); },
+    w: function () {
+      print(upline());
+      print('USER     TTY      LOGIN@   IDLE   WHAT' +
+        '\nremus    tty1     21Aug72  0.00s  vi draft.md' +
+        '\nguest    pts/0    ' + login.toTimeString().slice(0, 5) + '    0.00s  w', 'table');
+    },
     clear: function () { out.innerHTML = ''; blocks.forEach(function (b) { b.classList.add('hidden'); }); },
+    reset: function () { out.innerHTML = ''; blocks.forEach(function (b) { b.classList.remove('hidden'); }); hint.classList.remove('hidden'); },
     exit: function () { print('There is no escape. Try <span class="y">medium</span> instead.'); },
-    vim: function () { print('You are now in vim. Good luck. (Kidding: <span class="y">:q</span> works here.)'); },
+    vi: function () { print('You are now in vi. Good luck. (Kidding: <span class="y">:q</span> works here.)'); },
+    vim: function () { commands.vi(); },
     ':q': function () { print('See? Easy.'); },
     sudo: function () { print('remus is not in the sudoers file. This incident will be reported.', 'y'); },
     'rm -rf /': function () { print('Nice try. This page is static.', 'y'); }
@@ -240,16 +290,32 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
     print('<span class="ps1">remus@lazar.info:<b>~</b>$</span> ' + esc(raw));
     var c = raw.toLowerCase().replace(/^sudo\s.*/, 'sudo').replace(/^dev\.to$/, 'devto')
       .replace(/^ls( -\w+)? +(~\/)?writing\/?$/, 'posts');
-    if (commands[c]) commands[c]();
+    // Commands get their options; whatever else a command does not know is
+    // ignored, as with ls -la or vi draft.md.
+    var opts = '';
+    if (!commands[c]) { opts = (c.match(/\s-\S*/g) || []).join(''); c = c.split(/\s+/)[0]; }
+    if (commands[c]) commands[c](opts);
     else print('bash: ' + esc(raw.split(/\s+/)[0]) + ': command not found. Try <span class="y">help</span>.');
     window.scrollTo(0, document.body.scrollHeight);
   });
   input.addEventListener('focus', function () { cur.classList.add('hidden'); });
   input.addEventListener('blur', function () { cur.classList.remove('hidden'); });
 
+  // The prompt takes the keyboard once it shows, unless the visitor has put
+  // focus elsewhere, and keys typed anywhere on the page land in it. Touch
+  // screens only get the latter: focusing would open the on-screen keyboard.
+  var fine = window.matchMedia('(pointer: fine)').matches;
+  function focusPrompt() { input.focus({ preventScroll: true }); }
+  function offerPrompt() { if (fine && document.activeElement === document.body) focusPrompt(); }
+  document.addEventListener('keydown', function (e) {
+    if (e.target === input || e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (form.classList.contains('hidden')) revealAll();
+    focusPrompt();
+  });
+
   // Typing intro: the content is already in the HTML, so without JS or with
   // reduced motion the page simply shows everything at once.
-  if (reduce) return;
+  if (reduce) { offerPrompt(); return; }
   var cmds = blocks.map(function (b) { return b.querySelector('.cmd'); });
   var texts = cmds.map(function (c) { return c.textContent; });
   blocks.forEach(function (b, i) {
@@ -271,11 +337,11 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
     hint.classList.remove('hidden');
   }
   document.addEventListener('keydown', function once() { if (!skipped) revealAll(); document.removeEventListener('keydown', once); });
-  document.addEventListener('click', function once() { if (!skipped) revealAll(); document.removeEventListener('click', once); });
+  document.addEventListener('click', function once() { if (!skipped) { revealAll(); offerPrompt(); } document.removeEventListener('click', once); });
 
   function run(i) {
     if (skipped) return;
-    if (i >= blocks.length) { revealAll(); return; }
+    if (i >= blocks.length) { revealAll(); offerPrompt(); return; }
     var b = blocks[i], t = texts[i], n = 0;
     b.classList.remove('hidden');
     (function type() {
