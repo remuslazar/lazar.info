@@ -327,6 +327,35 @@ I write about AI-assisted development and what it does to the way teams work, wi
   input.addEventListener('focus', function () { cur.classList.add('hidden'); });
   input.addEventListener('blur', function () { cur.classList.remove('hidden'); });
 
+  // Tab completes the word at the cursor, as in a shell: one match fills in,
+  // several fill in what they share and a second Tab lists them. On an empty
+  // prompt Tab moves the focus on as usual, so keyboard users can leave.
+  var tabbed = null;
+  function completions(before) {
+    if (before.trim()) return ['about.txt', 'links/', 'workbench/', 'writing/', '~/links/', '~/workbench/', '~/writing/'];
+    return Object.keys(commands).filter(function (k) { return /^[\w.-]+$/.test(k); });
+  }
+  input.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || !input.value.trim()) return;
+    e.preventDefault();
+    var at = input.selectionStart, before = input.value.slice(0, at), word = /\S*$/.exec(before)[0];
+    before = before.slice(0, before.length - word.length);
+    var m = completions(before, word).filter(function (c, i, all) { return c.indexOf(word) === 0 && all.indexOf(c) === i; }).sort();
+    if (!m.length) return;
+    var common = m.reduce(function (p, c) { while (c.indexOf(p) !== 0) p = p.slice(0, -1); return p; });
+    var fill = m.length === 1 && !/\/$/.test(m[0]) ? m[0] + ' ' : common;
+    if (fill !== word) {
+      input.value = before + fill + input.value.slice(at);
+      input.setSelectionRange(before.length + fill.length, before.length + fill.length);
+    } else if (m.length > 1 && tabbed === input.value) {
+      hint.classList.add('hidden');
+      print('<span class="ps1">remus@lazar.info:<b>~</b>$</span> ' + esc(input.value));
+      print(esc(m.join('  ')));
+      window.scrollTo(0, document.body.scrollHeight);
+    }
+    tabbed = input.value;
+  });
+
   // The prompt takes the keyboard once it shows, unless the visitor has put
   // focus elsewhere, and keys typed anywhere on the page land in it. Touch
   // screens only get the latter: focusing would open the on-screen keyboard.
