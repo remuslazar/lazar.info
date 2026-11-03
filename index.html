@@ -58,6 +58,9 @@
   .dim { color: var(--dim); }
   .y { color: var(--yellow); }
   .m { color: var(--magenta); }
+  .c { color: var(--cyan); }
+  .g { color: var(--green); }
+  .rev { background: var(--fg); color: var(--panel); }
   a { color: var(--cyan); text-decoration: none; }
   a:hover, a:focus-visible { text-decoration: underline; outline: none; }
   h1 { font: inherit; margin: 0; color: var(--fg); font-weight: bold; }
@@ -101,7 +104,7 @@
 
     <section class="block">
       <div class="line"><span class="ps1">remus@lazar.info:<b>~</b>$</span> <span class="cmd">cat about.txt</span></div>
-      <div class="line">Software architect. Computer science &amp; electrical engineering at the University of Stuttgart.
+      <div class="line" id="about">Software architect. Computer science &amp; electrical engineering at the University of Stuttgart.
 Co-founded cron IT in 2002: web projects and hosting, run by its owners. At EV Freaks, chargEV started as an app built after hours; today it is ChargEV FleX, and we are an e-mobility provider ourselves.
 I write about AI-assisted development and what it does to the way teams work, with numbers from my own commit history.</div>
     </section>
@@ -147,7 +150,7 @@ I write about AI-assisted development and what it does to the way teams work, wi
     <div id="out"></div>
     <form id="prompt" autocomplete="off" class="line">
       <label for="cmd" class="ps1">remus@lazar.info:<b>~</b>$</label>
-      <input id="cmd" name="cmd" spellcheck="false" aria-label="Type a command, try help">
+      <input id="cmd" name="cmd" spellcheck="false" autocapitalize="none" autocorrect="off" aria-label="Type a command, try help">
       <span class="cursor" id="cur" aria-hidden="true"></span>
     </form>
     <div class="line dim" id="hint">type <span class="y">help</span>, or just click a link</div>
@@ -188,7 +191,10 @@ I write about AI-assisted development and what it does to the way teams work, wi
 
   // posts.json is written every few hours from the Medium feed by the
   // deploy workflow. The list in the HTML above is the fallback.
-  var posts = [];
+  var posts = Array.prototype.map.call(document.querySelectorAll('#posts li'), function (li) {
+    var a = li.querySelector('a'), sub = li.querySelector('.sub');
+    return { date: li.querySelector('.dim').textContent, url: a.href, title: a.textContent, subtitle: sub ? sub.textContent : '' };
+  });
   function postItem(p) {
     var li = document.createElement('li');
     var d = document.createElement('span');
@@ -216,8 +222,9 @@ I write about AI-assisted development and what it does to the way teams work, wi
   fetch('/posts.json', { cache: 'no-cache' })
     .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
     .then(function (data) {
-      posts = (data.posts || []).filter(function (p) { return /^https:\/\//.test(p.url) && p.title && p.date; });
-      if (!posts.length) return;
+      var list = (data.posts || []).filter(function (p) { return /^https:\/\//.test(p.url) && p.title && p.date; });
+      if (!list.length) return;
+      posts = list;
       var ul = document.getElementById('posts');
       ul.textContent = '';
       posts.slice(0, 5).forEach(function (p) { ul.appendChild(postItem(p)); });
@@ -234,10 +241,12 @@ I write about AI-assisted development and what it does to the way teams work, wi
       Math.floor(m / 60) % 24 + ':' + ('0' + m % 60).slice(-2) + ',  2 users,  load average: 0.42, 0.37, 0.35';
   }
 
-  // What help lists, in order. The jokes stay unlisted.
+  // help lists these, in order. The jokes stay unlisted.
   var help = [
     ['whoami', 'who is this'],
     ['ls', 'list the files'],
+    ['cat', 'print a file, try cat about.txt'],
+    ['cd', 'change the directory'],
     ['posts', 'list all posts'],
     ['workbench', 'what I build after hours']
   ].concat(Object.keys(links).map(function (k) {
@@ -247,12 +256,334 @@ I write about AI-assisted development and what it does to the way teams work, wi
     ['uname', 'print system information, -a for all of it'],
     ['uptime', 'tell how long the system has been running'],
     ['w', 'show who is logged in and what they are doing'],
+    ['history', 'list your commands; up and down recall them'],
     ['clear', 'clear the screen'],
-    ['reset', 'start over from the first screen']
+    ['reset', 'start over from the first screen'],
+    ['busybox', 'list everything else: grep, find, ps, cal, ...']
   ]);
 
+  // The shell: a small BusyBox over a file tree built from the page. Each
+  // command takes (args, io, name) and returns its output as text, which
+  // feeds the next command of a pipe or lands on the screen. ANSI colours
+  // (\x1b[35m) become spans there and are stripped in pipes. The page's own
+  // commands print HTML themselves when they write to the screen.
+  var HOME = '/home/remus', cwd = HOME, oldpwd = HOME, status = 0, hist = [], hpos = 0;
+  var vars = { USER: 'remus', LOGNAME: 'remus', HOME: HOME, SHELL: '/bin/sh', HOSTNAME: 'lazar.info',
+    PATH: '/sbin:/usr/sbin:/bin:/usr/bin', TERM: 'xterm-256color', EDITOR: 'vi' };
+  var label = form.querySelector('b');
+  var about = document.getElementById('about').textContent + '\n';
+  var MON = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+
+  // busybox --list of BusyBox 1.37.0 on Debian. The applets this page does
+  // not have fail the way they most likely would for an ordinary user.
+  var BUSYBOX = ('[ [[ acpid adjtimex ar arch arp arping ascii ash awk base64 basename bc blkdiscard blkid ' +
+    'blockdev brctl bunzip2 bzcat bzip2 cal cat chgrp chmod chown chroot chvt clear cmp cp cpio crc32 crond ' +
+    'crontab cttyhack cut date dc dd deallocvt depmod devmem df diff dirname dmesg dnsdomainname dos2unix dpkg ' +
+    'dpkg-deb du dumpkmap dumpleases echo ed egrep env expand expr factor fallocate false fatattr fdisk fgrep ' +
+    'find findfs fold free freeramdisk fsfreeze fstrim ftpget ftpput getfattr getopt getty grep groups gunzip ' +
+    'gzip halt head hexdump hostid hostname httpd hwclock i2cdetect i2cdump i2cget i2cset i2ctransfer id ' +
+    'ifconfig ifdown ifup init insmod install ionice ip ipcalc kill killall klogd last less link linux32 ' +
+    'linux64 linuxrc ln loadfont loadkmap logger login logname logread losetup ls lsmod lsscsi lzcat lzma lzop ' +
+    'md5sum mdev microcom mim mkdir mkdosfs mke2fs mkfifo mknod mkpasswd mkswap mktemp modinfo modprobe more ' +
+    'mount mt mv nameif nbd-client nc netstat nl nologin nproc nsenter nslookup nuke od openvt partprobe passwd ' +
+    'paste patch pidof ping ping6 pivot_root poweroff printf ps pwd rdate readlink realpath reboot renice ' +
+    'reset resume rev rm rmdir rmmod route rpm rpm2cpio run-init run-parts sed seq setkeycodes setpriv setsid ' +
+    'sh sha1sum sha256sum sha3sum sha512sum shred shuf sleep sort ssl_client start-stop-daemon stat strings ' +
+    'stty su sulogin svc svok swapoff swapon switch_root sync sysctl syslogd tac tail tar taskset tc tee ' +
+    'telnet test tftp time timeout top touch tr traceroute traceroute6 true truncate ts tty tunctl ubirename ' +
+    'udhcpc udhcpc6 udhcpd uevent umount uname uncompress unexpand uniq unix2dos unlink unlzma unshare unxz ' +
+    'unzip uptime usleep uudecode uuencode vconfig vi w watch watchdog wc wget which who whoami xargs xxd xz ' +
+    'xzcat yes zcat').split(' ');
+  var ERRORS = {
+    'Read-only file system': 'ar bunzip2 bzip2 chgrp chmod chown cp cpio crontab dd dos2unix dpkg dpkg-deb ' +
+      'fallocate gunzip gzip install link ln lzma lzop mkdir mkfifo mknod mktemp mv patch rmdir rpm rpm2cpio ' +
+      'shred tar touch truncate uncompress unix2dos unlink unlzma unxz unzip uudecode xz',
+    'Network is unreachable': 'arp arping brctl dumpleases ftpget ftpput httpd ifconfig ifdown ifup ip ipcalc ' +
+      'nameif nbd-client nc netstat nslookup ping ping6 rdate route ssl_client tc telnet tftp traceroute ' +
+      'traceroute6 tunctl udhcpc udhcpc6 udhcpd vconfig wget',
+    'Operation not permitted': 'acpid adjtimex blkdiscard blkid blockdev chroot chvt crond cttyhack deallocvt ' +
+      'depmod devmem dmesg dumpkmap fdisk findfs freeramdisk fsfreeze fstrim getty halt hwclock i2cdetect ' +
+      'i2cdump i2cget i2cset i2ctransfer init insmod ionice kill killall klogd linux32 linux64 linuxrc loadfont ' +
+      'loadkmap logger logread losetup lsmod lsscsi mdev microcom mkdosfs mke2fs mkswap modinfo modprobe mount ' +
+      'mt nsenter nuke openvt partprobe pivot_root poweroff renice resume rmmod run-init run-parts setkeycodes ' +
+      'setpriv setsid start-stop-daemon sulogin svc svok swapoff swapon switch_root sysctl syslogd taskset ' +
+      'ubirename uevent umount unshare watchdog'
+  };
+  function errno(name) {
+    if (BUSYBOX.indexOf(name) < 0) return '';
+    for (var e in ERRORS) if ((' ' + ERRORS[e] + ' ').indexOf(' ' + name + ' ') >= 0) return e;
+    return 'Function not implemented';
+  }
+
+  function lpad(s, n) { s = String(s); while (s.length < n) s = ' ' + s; return s; }
+  function rpad(s, n) { s = String(s); while (s.length < n) s += ' '; return s; }
+  function two(n) { return ('0' + n).slice(-2); }
+  function num(v, d) { v = parseInt(v, 10); return isNaN(v) ? d : Math.abs(v); }
+  function lines(s) { return s ? s.replace(/\n$/, '').split('\n') : []; }
+  function join(l) { return l.length ? l.join('\n') + '\n' : ''; }
+  function bytes(s) { return new TextEncoder().encode(s).length; }
+  function stamp(t) {
+    var d = new Date(t);
+    return MON[d.getMonth()] + ' ' + lpad(d.getDate(), 2) + ' ' +
+      (Math.abs(Date.now() - t) < 182 * 864e5 ? two(d.getHours()) + ':' + two(d.getMinutes()) : ' ' + d.getFullYear());
+  }
+  function escapes(s) {
+    return s.replace(/\\(e|033|n|t|\\)/g, function (m, c) { return { e: '\x1b', '033': '\x1b', n: '\n', t: '\t', '\\': '\\' }[c]; });
+  }
+  // Splits options from operands; options named in `val` take a value
+  // (-n 5, -n5), -5 counts as -n 5, and long options land under their name.
+  // Nothing complains about an option it does not know.
+  function getopt(a, val) {
+    var o = { _: [] };
+    for (var i = 0; i < a.length; i++) {
+      var s = a[i];
+      if (s === '--') { o._ = o._.concat(a.slice(i + 1)); break; }
+      if (s[0] !== '-' || s === '-') o._.push(s);
+      else if (s[1] === '-') o[s.slice(2)] = true;
+      else if (/^-\d+$/.test(s)) o.n = s.slice(1);
+      else for (var j = 1; j < s.length; j++) {
+        if (val && val.indexOf(s[j]) >= 0) { o[s[j]] = s.slice(j + 1) || a[++i] || ''; break; }
+        o[s[j]] = true;
+      }
+    }
+    return o;
+  }
+  // Basic regular expressions to JS: there \( \) \{ \} \+ \? \| are the
+  // operators and the plain characters are literal.
+  function bre(p) { return p.replace(/\\?[(){}+?|]/g, function (m) { return m.length > 1 ? m[1] : '\\' + m; }); }
+  function globRe(p, i) {
+    return new RegExp('^' + p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', i ? 'i' : '');
+  }
+
+  var SGR = { 2: 'dim', 7: 'rev', 32: 'g', 33: 'y', 35: 'm', 36: 'c' };
+  function render(text) {
+    var open = false;
+    return esc(text)
+      .replace(/https?:\/\/[^\s<>"'\x1b]+/g, function (u) { return '<a href="' + u + '">' + u + '</a>'; })
+      .replace(/\x1b\[([\d;]*)m/g, function (m, n) {
+        var s = open ? '</span>' : '', c = SGR[n.split(';').pop()];
+        open = !!c;
+        return s + (c ? '<span class="' + c + '">' : '');
+      }) + (open ? '</span>' : '');
+  }
+  function ps1() { return '<span class="ps1">remus@lazar.info:<b>' + esc(tilde(cwd)) + '</b>$</span> '; }
+
+  // The file tree, built afresh for each lookup so it follows the posts feed.
+  function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+  function tree() {
+    var t = Date.parse(document.lastModified) || Date.now(), born = boot(1972);
+    function d(kids, own, mode) { return { t: 'd', kids: kids, own: own || 'root', time: own ? t : born, mode: mode }; }
+    function f(body, own, mode) { return { t: 'f', body: body, own: own || 'root', time: own ? t : born, mode: mode }; }
+    function l(to, own) { return { t: 'l', to: to, own: own || 'root', time: own ? t : born }; }
+    var bin = { busybox: f('', null, '-rwxr-xr-x') }, writing = {}, web = {}, bench = {};
+    BUSYBOX.forEach(function (a) { bin[a] = l('busybox'); });
+    // ~/workbench has a folder per line of the page's list, with a README.
+    Array.prototype.forEach.call(document.querySelectorAll('#workbench li'), function (li) {
+      var a = li.querySelector('a');
+      bench[li.children[0].textContent.replace(/\/$/, '')] =
+        d({ README: f(li.children[1].textContent + '\n' + (a ? a.href + '\n' : ''), 'remus') }, 'remus');
+    });
+    posts.forEach(function (p) {
+      var n = f('# ' + p.title + '\n' + (p.subtitle ? '\n' + p.subtitle + '\n' : '') + '\n' + p.date + ', ' + p.url + '\n', 'remus');
+      n.time = new Date(p.date + 'T00:00').getTime() || t;
+      writing[slug(p.title) + '.md'] = n;
+    });
+    Object.keys(links).forEach(function (k) { web[k === 'devto' ? 'dev.to' : k] = l(links[k], 'remus'); });
+    return d({
+      bin: d(bin),
+      dev: d({ 'null': f('', null, 'crw-rw-rw-') }),
+      etc: d({
+        hostname: f('lazar.info\n'),
+        'os-release': f('NAME="RemusOS"\nVERSION="1.0 (caffeine-driven)"\nID=remusos\nHOME_URL="https://lazar.info/"\n'),
+        passwd: f('root:x:0:0:root:/root:/bin/sh\nremus:x:1000:1000:Remus Lazar:/home/remus:/bin/sh\n')
+      }),
+      home: d({ remus: d({
+        '.profile': f('export EDITOR=vi\n', 'remus'),
+        'about.txt': f(about, 'remus'),
+        links: d(web, 'remus'),
+        workbench: d(bench, 'remus'),
+        writing: d(writing, 'remus')
+      }, 'remus') }),
+      proc: d({
+        loadavg: f('0.42 0.37 0.35 1/4 4251\n'),
+        uptime: f(function () { var s = (Date.now() - born) / 1e3; return s.toFixed(2) + ' ' + (s / 3).toFixed(2) + '\n'; }),
+        version: f('RemusOS version 1.0-caffeine-driven (remus@lazar.info) #1 SMP Mon Aug 21 00:15:00 CET 1972\n')
+      }),
+      root: d({}, null, 'drwx------'),
+      tmp: d({}, null, 'drwxrwxrwt')
+    });
+  }
+  function denied(n) { return n.mode === 'drwx------'; }
+  function abs(p) {
+    var parts = [];
+    ((p[0] === '/' ? '' : cwd + '/') + p).split('/').forEach(function (s) {
+      if (s === '..') parts.pop(); else if (s && s !== '.') parts.push(s);
+    });
+    return '/' + parts.join('/');
+  }
+  function tilde(p) { return p.indexOf(HOME) === 0 ? '~' + p.slice(HOME.length) : p; }
+  // Finds a node by path. Links inside the tree are followed, the last one
+  // not with `nofollow`; the ones in ~/links point to the web and stay links.
+  function lookup(p, nofollow) {
+    var n = tree(), dir, parts = abs(p).split('/').filter(Boolean);
+    for (var i = 0; i < parts.length; i++) {
+      if (n.t !== 'd' || denied(n) || !n.kids.hasOwnProperty(parts[i])) return null;
+      dir = n;
+      n = n.kids[parts[i]];
+      if (n.t === 'l' && dir.kids.hasOwnProperty(n.to) && !(nofollow && i === parts.length - 1)) n = dir.kids[n.to];
+    }
+    return n;
+  }
+  function body(n) { return n.t === 'l' ? n.to + '\n' : typeof n.body === 'function' ? n.body() : n.body; }
+  // A file's text for an applet, or null after saying why not.
+  function read(p, name, io) {
+    var n = lookup(p), e = !n ? 'No such file or directory' : denied(n) ? 'Permission denied' : n.t === 'd' ? 'Is a directory' : '';
+    if (e) { io.err(name + ': ' + p + ': ' + e); return null; }
+    return body(n);
+  }
+  // What an applet reads: its files, or stdin without any ('-' is stdin too).
+  function readAll(files, io, name) {
+    if (!files.length) return io.stdin || '';
+    return files.map(function (p) { return p === '-' ? io.stdin || '' : read(p, name, io) || ''; }).join('');
+  }
+  // The files under some paths, for grep -r.
+  function walk(paths) {
+    var r = [];
+    paths.forEach(function (p) {
+      (function go(p, n) {
+        if (!n) return;
+        if (n.t !== 'd') r.push(p);
+        else if (!denied(n)) Object.keys(n.kids).sort().forEach(function (k) { go(p.replace(/\/$/, '') + '/' + k, n.kids[k]); });
+      })(p, lookup(p));
+    });
+    return r;
+  }
+  // Expands * and ? in the last part of a path; without a match the word stays.
+  function glob(p) {
+    var i = p.lastIndexOf('/'), pat = p.slice(i + 1), dir = lookup(i < 0 ? '.' : p.slice(0, i) || '/');
+    if (/[*?]/.test(p.slice(0, i + 1)) || !dir || dir.t !== 'd' || denied(dir)) return [p];
+    var re = globRe(pat), m = Object.keys(dir.kids).sort().filter(function (k) {
+      return re.test(k) && (k[0] !== '.' || pat[0] === '.');
+    });
+    return m.length ? m.map(function (k) { return p.slice(0, i + 1) + k; }) : [p];
+  }
+  function paint(name, n) {
+    var c = n.t === 'd' ? 35 : n.t === 'l' ? 36 : /x/.test(n.mode || '') ? 32 : 0;
+    return c ? '\x1b[' + c + 'm' + name + '\x1b[0m' : name;
+  }
+  function long(name, n) {
+    var size = n.t === 'd' ? 4096 : n.t === 'l' ? n.to.length : bytes(body(n));
+    return (n.mode || { d: 'drwxr-xr-x', l: 'lrwxrwxrwx', f: '-rw-r--r--' }[n.t]) + ' ' + lpad(n.t === 'd' ? 2 : 1, 2) + ' ' +
+      rpad(n.own, 5) + ' ' + rpad(n.own, 5) + ' ' + lpad(size, 5) + ' ' + stamp(n.time) + ' ' + paint(name, n) +
+      (n.t === 'l' ? ' -> ' + n.to : '');
+  }
+  function procs(self) {
+    return [[1, 'root', '0:01', 'init'], [302, 'remus', '999:59', 'vi draft.md'], [4242, 'remus', '0:00', '-sh'], [4251, 'remus', '0:00', self]];
+  }
+
+  // $VARS are marked when a line is split and filled in when their command
+  // runs, so X=1; echo $X and false; echo $? work.
+  function expand(s) {
+    return s.replace(/\x00(.*?)\x00/g, function (m, k) {
+      return k === '?' ? String(status) : k === '$' ? '4242' : k === 'PWD' ? cwd : k === 'OLDPWD' ? oldpwd : vars[k] || '';
+    });
+  }
+  // Splits a line into words and operators, expanding quotes and ~.
+  function lex(s) {
+    var toks = [], w = null, i = 0, c, v, q;
+    function word() { return (w = w || { s: '', glob: false }); }
+    function end() { if (w) toks.push(w); w = null; }
+    function dollar(str) {
+      var m = /^\$(\?|\$|\w+|\{\w+\})/.exec(str);
+      return m && ['\x00' + m[1].replace(/[{}]/g, '') + '\x00', m[0].length];
+    }
+    while (i < s.length) {
+      c = s[i];
+      if (/\s/.test(c)) { end(); i++; }
+      else if ('|;&<>'.indexOf(c) >= 0) {
+        end();
+        c = /^(&&|\|\||>>|.)/.exec(s.slice(i))[1];
+        toks.push({ op: c });
+        i += c.length;
+      }
+      else if (c === "'") { q = s.indexOf("'", i + 1); if (q < 0) q = s.length; word().s += s.slice(i + 1, q); i = q + 1; }
+      else if (c === '"') {
+        word();
+        for (i++; i < s.length && s[i] !== '"';) {
+          if (s[i] === '\\' && /["\\$`]/.test(s[i + 1] || '')) { w.s += s[i + 1]; i += 2; }
+          else if (s[i] === '$' && (v = dollar(s.slice(i)))) { w.s += v[0]; i += v[1]; }
+          else w.s += s[i++];
+        }
+        i++;
+      }
+      else if (c === '\\') { word().s += s[i + 1] || ''; i += 2; }
+      else if (c === '$' && (v = dollar(s.slice(i)))) { word().s += v[0]; i += v[1]; }
+      else if (c === '~' && !w && /^~([\/\s|;&<>]|$)/.test(s.slice(i))) { word().s += HOME; i++; }
+      else { word(); if (c === '*' || c === '?') w.glob = true; w.s += c; i++; }
+    }
+    end();
+    return toks;
+  }
+  // Runs a line: pipelines joined by ; && ||, with < and > on the commands.
+  function shell(line) {
+    var list = [], item, stage, toks = lex(line);
+    function pipe() { stage = { words: [] }; item.stages.push(stage); }
+    function next(op) { item = { op: op, stages: [] }; list.push(item); pipe(); }
+    next(';');
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i];
+      if (!t.op) stage.words.push(t);
+      else if (t.op === '|') pipe();
+      else if (/[<>]/.test(t.op)) stage[t.op === '<' ? 'from' : 'to'] = (toks[++i] || {}).s || '';
+      else next(t.op === '&' ? ';' : t.op);
+    }
+    list.forEach(function (it) {
+      if (it.op === '&&' && status || it.op === '||' && !status) return;
+      status = pipeline(it.stages);
+    });
+  }
+  function pipeline(stages) {
+    if (stages.length === 1 && !stages[0].words.length && stages[0].to === undefined) return status;
+    if (stages.some(function (s) { return !s.words.length || s.to === '' || s.from === ''; })) {
+      print('sh: syntax error: unexpected newline');
+      return 2;
+    }
+    var data = '', io;
+    for (var i = 0; i < stages.length; i++) {
+      var st = stages[i], argv = [];
+      st.words.forEach(function (w) { argv = argv.concat(w.glob ? glob(expand(w.s)) : [expand(w.s)]); });
+      if (st.to !== undefined) st.to = expand(st.to);
+      if (st.from !== undefined) st.from = expand(st.from);
+      io = { stdin: i ? data : null, tty: i === stages.length - 1, status: 0, table: false,
+        err: function (m) { print(esc(m)); this.status = 1; } };
+      if (st.to !== undefined) {
+        if (abs(st.to) !== '/dev/null') { print('sh: can&#39;t create ' + esc(st.to) + ': Read-only file system'); return 1; }
+        io.tty = false;
+      }
+      if (st.from !== undefined && (io.stdin = read(st.from, 'sh', io)) === null) return 1;
+      if (argv.length === 1 && /^[A-Za-z_]\w*=/.test(argv[0])) { commands.export(argv); data = ''; continue; }
+      if (!argv[0]) { data = ''; continue; }
+      try { data = exec(argv, io) || ''; } catch (e) { io.err(argv[0] + ': ' + e.message); data = ''; }
+      if (!io.tty) data = data.replace(/\x1b\[[\d;]*m/g, '');
+      if (st.to !== undefined) data = '';
+    }
+    if (io.tty && data) print(render(data.replace(/\n$/, '')), io.table ? 'table' : '');
+    return io.status;
+  }
+  function exec(argv, io) {
+    var name = argv[0], a = argv.slice(1);
+    if (name === 'busybox' && a.length && a[0][0] !== '-') { name = a[0]; a = a.slice(1); }
+    var k = commands.hasOwnProperty(name) ? name : name.toLowerCase();
+    if (commands.hasOwnProperty(k)) return commands[k](a, io, k);
+    var e = errno(name);
+    if (e) io.err(name + ': ' + e);
+    else { print('sh: ' + esc(name) + ': not found. Try <span class="y">help</span>.'); io.status = 127; }
+  }
+
   var commands = {
-    help: function () {
+    // The page's own commands.
+    help: function (a, io) {
+      if (!io.tty) return join(help.map(function (h) { return rpad(h[0], 10) + h[1]; }));
       var ul = document.createElement('ul');
       ul.className = 'kv';
       help.forEach(function (h) {
@@ -262,50 +593,389 @@ I write about AI-assisted development and what it does to the way teams work, wi
       });
       out.appendChild(ul);
     },
-    posts: function () {
-      if (!posts.length) { print('posts: feed not loaded, see <span class="y">medium</span>'); return; }
+    posts: function (a, io) {
+      var list = posts.slice(0, num(a[0], posts.length) || posts.length);
+      if (!io.tty) return join(list.map(function (p) { return p.date + '  ' + p.title + '  ' + p.url; }));
       var ul = document.createElement('ul');
-      posts.forEach(function (p) { ul.appendChild(postItem(p)); });
+      list.forEach(function (p) { ul.appendChild(postItem(p)); });
       out.appendChild(ul);
     },
-    whoami: function () { print('Remus Lazar. Mostly harmless.'); },
-    ls: function () { print('about.txt  <span class="m">links/</span>  <span class="m">workbench/</span>  <span class="m">writing/</span>'); },
-    workbench: function () {
-      var ul = document.getElementById('workbench').cloneNode(true);
+    workbench: function (a, io) {
+      var ul = document.getElementById('workbench');
+      if (!io.tty) return join(Array.prototype.map.call(ul.children, function (li) { return rpad(li.children[0].textContent, 15) + li.children[1].textContent; }));
+      ul = ul.cloneNode(true);
       ul.removeAttribute('id');
       out.appendChild(ul);
     },
-    date: function () { print(new Date().toString()); },
-    uname: function (opts) {
-      if (!/\s-(-all|[a-z]*a)/.test(opts)) { print('RemusOS'); return; }
-      var now = Date.now(), y = new Date(now).getUTCFullYear();
-      if (boot(y) > now) y--;
-      var d = Math.floor((now - boot(y)) / 864e5);
-      print('RemusOS lazar.info 1.0-caffeine-driven #1 SMP Mon Aug 21 00:15:00 CET 1972 arm64, uptime: ' +
-        (y - 1972) + ' years, ' + d + (d === 1 ? ' day' : ' days'));
+    whoami: function () { return 'Remus Lazar. Mostly harmless.\n'; },
+    uname: function (a) {
+      var o = getopt(a), f = { s: 'RemusOS', n: 'lazar.info', r: '1.0-caffeine-driven', v: '#1 SMP Mon Aug 21 00:15:00 CET 1972', m: 'arm64' };
+      if (o.a || o.all) {
+        var now = Date.now(), y = new Date(now).getUTCFullYear();
+        if (boot(y) > now) y--;
+        var d = Math.floor((now - boot(y)) / 864e5);
+        return 'RemusOS lazar.info 1.0-caffeine-driven #1 SMP Mon Aug 21 00:15:00 CET 1972 arm64, uptime: ' +
+          (y - 1972) + ' years, ' + d + (d === 1 ? ' day' : ' days') + '\n';
+      }
+      var r = 'snrvm'.split('').filter(function (k) { return o[k]; }).map(function (k) { return f[k]; });
+      return (r.length ? r.join(' ') : f.s) + '\n';
     },
-    uptime: function () { print(upline()); },
-    w: function () {
+    uptime: function () { return upline() + '\n'; },
+    w: function (a, io) {
+      var t = 'USER     TTY      LOGIN@   IDLE   WHAT\nremus    tty1     21Aug72  0.00s  vi draft.md\n' +
+        'remus    pts/0    ' + login.toTimeString().slice(0, 5) + '    0.00s  w';
+      if (!io.tty) return upline() + '\n' + t + '\n';
       print(upline());
-      print('USER     TTY      LOGIN@   IDLE   WHAT' +
-        '\nremus    tty1     21Aug72  0.00s  vi draft.md' +
-        '\nguest    pts/0    ' + login.toTimeString().slice(0, 5) + '    0.00s  w', 'table');
+      print(t, 'table');
     },
     clear: function () { out.innerHTML = ''; blocks.forEach(function (b) { b.classList.add('hidden'); }); },
-    reset: function () { out.innerHTML = ''; blocks.forEach(function (b) { b.classList.remove('hidden'); }); hint.classList.remove('hidden'); },
+    reset: function () {
+      cwd = oldpwd = HOME;
+      out.innerHTML = '';
+      blocks.forEach(function (b) { b.classList.remove('hidden'); });
+      hint.classList.remove('hidden');
+    },
+    reboot: function () {
+      print('Broadcast message from remus@lazar.info: the system is going down for reboot NOW!', 'y');
+      setTimeout(function () { location.reload(); }, 1500);
+    },
     exit: function () { print('There is no escape. Try <span class="y">medium</span> instead.'); },
     vi: function () { print('You are now in vi. Good luck. (Kidding: <span class="y">:q</span> works here.)'); },
-    vim: function () { commands.vi(); },
     ':q': function () { print('See? Easy.'); },
     sudo: function () { print('remus is not in the sudoers file. This incident will be reported.', 'y'); },
-    'rm -rf /': function () { print('Nice try. This page is static.', 'y'); }
+    rm: function (a, io) {
+      var o = getopt(a);
+      if (o.r || o.R) print('Nice try. This page is static.', 'y');
+      else io.err('rm: Read-only file system');
+    },
+
+    // Shell builtins.
+    cd: function (a, io) {
+      var p = a[0] === '-' ? oldpwd : a[0] || HOME, n = lookup(p);
+      var e = !n ? 'No such file or directory' : n.t !== 'd' ? 'Not a directory' : denied(n) ? 'Permission denied' : '';
+      if (e) { io.err('sh: cd: can\'t cd to ' + p + ': ' + e); return; }
+      oldpwd = cwd;
+      cwd = abs(p);
+      if (a[0] === '-') return cwd + '\n';
+    },
+    'export': function (a) {
+      if (!a.length) return join(Object.keys(vars).sort().map(function (k) { return 'export ' + k + "='" + vars[k] + "'"; }));
+      a.forEach(function (s) { var i = s.indexOf('='); if (i > 0) vars[s.slice(0, i)] = s.slice(i + 1); });
+    },
+    history: function () { return join(hist.map(function (h, i) { return lpad(i, 5) + '  ' + h; })); },
+
+    // BusyBox applets.
+    arch: function () { return 'arm64\n'; },
+    base64: function (a, io) {
+      var o = getopt(a), t = readAll(o._, io, 'base64');
+      try {
+        if (o.d) return decodeURIComponent(escape(atob(t.replace(/\s/g, ''))));
+        return (btoa(unescape(encodeURIComponent(t))).match(/.{1,76}/g) || ['']).join('\n') + '\n';
+      } catch (e) { io.err('base64: invalid input'); }
+    },
+    basename: function (a) {
+      var b = (a[0] || '').replace(/\/+$/, '').split('/').pop() || '/';
+      if (a[1] && b !== a[1] && b.slice(-a[1].length) === a[1]) b = b.slice(0, -a[1].length);
+      return b + '\n';
+    },
+    busybox: function (a) {
+      if (/^--list/.test(a[0])) return join(BUSYBOX.map(function (b) { return (a[0] === '--list-full' ? 'bin/' : '') + b; }));
+      return 'BusyBox v1.37.0 (RemusOS) multi-call binary.\n\nUsage: busybox [function [arguments]...]\n' +
+        '   or: busybox --list[-full]\n\nCurrently defined functions:\n\t' + BUSYBOX.join(', ') + '\n';
+    },
+    cal: function (a, io) {
+      var now = new Date(), m = a.length > 1 ? +a[0] - 1 : now.getMonth(), y = a.length > 1 ? +a[1] : now.getFullYear();
+      if (!(m >= 0 && m < 12 && y >= 1 && y <= 9999 && m % 1 === 0 && y % 1 === 0)) { io.err('cal: invalid date'); return; }
+      var first = new Date(2000, m, 1), last, title, s, days;
+      first.setFullYear(y);
+      last = new Date(first.getTime());
+      last.setMonth(m + 1, 0);
+      days = last.getDate();
+      title = first.toLocaleString('en-US', { month: 'long' }) + ' ' + y;
+      s = lpad(title, Math.floor((20 - title.length) / 2) + title.length) + '\nSu Mo Tu We Th Fr Sa\n' + Array(first.getDay() * 3 + 1).join(' ');
+      for (var d = 1; d <= days; d++) {
+        var c = lpad(d, 2);
+        if (y === now.getFullYear() && m === now.getMonth() && d === now.getDate()) c = '\x1b[7m' + c + '\x1b[0m';
+        s += c + (d === days ? '\n' : (first.getDay() + d) % 7 ? ' ' : '\n');
+      }
+      return s;
+    },
+    cat: function (a, io) { return readAll(getopt(a)._, io, 'cat'); },
+    cut: function (a, io) {
+      var o = getopt(a, 'dfc'), list = o.f || o.c;
+      if (!list) { io.err('cut: expected a list of bytes, characters, or fields'); return; }
+      function want(i) {
+        return String(list).split(',').some(function (r) {
+          var m = r.split('-'), lo = parseInt(m[0], 10) || 1, hi = m.length > 1 ? parseInt(m[1], 10) || Infinity : lo;
+          return i >= lo && i <= hi;
+        });
+      }
+      return join(lines(readAll(o._, io, 'cut')).map(function (l) {
+        if (o.c) return l.split('').filter(function (x, i) { return want(i + 1); }).join('');
+        var d = o.d || '\t', f = l.split(d);
+        return f.length > 1 ? f.filter(function (x, i) { return want(i + 1); }).join(d) : l;
+      }));
+    },
+    date: function (a) {
+      var d = new Date(), u = getopt(a).u, tz = u ? 'UTC' : d.toLocaleTimeString('en-US', { timeZoneName: 'short' }).split(' ').pop();
+      if (u) d = new Date(d.getTime() + d.getTimezoneOffset() * 6e4);
+      return 'Sun Mon Tue Wed Thu Fri Sat'.split(' ')[d.getDay()] + ' ' + MON[d.getMonth()] + ' ' + lpad(d.getDate(), 2) + ' ' +
+        two(d.getHours()) + ':' + two(d.getMinutes()) + ':' + two(d.getSeconds()) + ' ' + tz + ' ' + d.getFullYear() + '\n';
+    },
+    dirname: function (a) {
+      var p = (a[0] || '.').replace(/(.)\/+$/, '$1'), i = p.lastIndexOf('/');
+      return (i > 0 ? p.slice(0, i) : i === 0 ? '/' : '.') + '\n';
+    },
+    dnsdomainname: function () { return 'info\n'; },
+    echo: function (a) {
+      var nl = '\n', e = false;
+      while (/^-[ne]+$/.test(a[0])) { if (a[0].indexOf('n') > 0) nl = ''; if (a[0].indexOf('e') > 0) e = true; a = a.slice(1); }
+      return (e ? escapes(a.join(' ')) : a.join(' ')) + nl;
+    },
+    ed: function (a, io) { io.status = 1; return '?\n'; },
+    env: function () {
+      return join(Object.keys(vars).map(function (k) { return k + '=' + vars[k]; }).concat('PWD=' + cwd, 'OLDPWD=' + oldpwd));
+    },
+    factor: function (a, io) {
+      return (a.length ? a : (io.stdin || '').split(/\s+/).filter(Boolean)).map(function (s) {
+        var x = Number(s), f = [];
+        if (!(x >= 1 && x <= 9007199254740991 && x % 1 === 0)) { io.err("factor: invalid number '" + s + "'"); return ''; }
+        for (var p = 2; p * p <= x; p += p > 2 ? 2 : 1) while (x % p === 0) { f.push(p); x /= p; }
+        if (x > 1) f.push(x);
+        return s + ':' + (f.length ? ' ' + f.join(' ') : '') + '\n';
+      }).join('');
+    },
+    'false': function (a, io) { io.status = 1; },
+    find: function (a, io) {
+      var paths = [], i = 0, name, type, max = Infinity, res = '';
+      while (i < a.length && a[i][0] !== '-') paths.push(a[i++]);
+      for (; i < a.length; i++) {
+        if (a[i] === '-name' || a[i] === '-iname') name = globRe(a[++i] || '', a[i - 1] === '-iname');
+        else if (a[i] === '-type') type = a[++i];
+        else if (a[i] === '-maxdepth') max = num(a[++i], Infinity);
+      }
+      (paths.length ? paths : ['.']).forEach(function (p) {
+        var n = lookup(p, true);
+        if (!n) { io.err('find: ' + p + ': No such file or directory'); return; }
+        (function go(n, path, depth, base) {
+          if ((!name || name.test(base)) && (!type || type === n.t)) res += path + '\n';
+          if (n.t !== 'd' || depth >= max) return;
+          if (denied(n)) { io.err('find: ' + path + ': Permission denied'); return; }
+          Object.keys(n.kids).sort().forEach(function (k) { go(n.kids[k], path.replace(/\/$/, '') + '/' + k, depth + 1, k); });
+        })(n, p, 0, p.replace(/\/+$/, '').split('/').pop() || p);
+      });
+      return res;
+    },
+    grep: function (a, io, name) {
+      var o = getopt(a, 'e'), pat = o.e !== undefined ? o.e : o._.shift(), re, res = '', hit = false;
+      if (pat === undefined) { io.err('Usage: grep [-ivcnlrhEF] PATTERN [FILE]...'); return; }
+      var src = o.F || name === 'fgrep' ? pat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : o.E || name === 'egrep' ? pat : bre(pat);
+      try { re = new RegExp(src, o.i ? 'i' : ''); } catch (e) { io.err('grep: bad regex \'' + pat + '\''); io.status = 2; return; }
+      var files = o.r || o.R ? walk(o._.length ? o._ : ['.']) : o._, many = files.length > 1 || o.r || o.R;
+      (files.length ? files : [null]).forEach(function (f) {
+        var t = f === null ? io.stdin || '' : read(f, name, io), c = 0, pre = many && !o.h ? f + ':' : '';
+        if (t === null) return;
+        lines(t).forEach(function (l, i) {
+          if (re.test(l) === !o.v) {
+            c++;
+            if (!o.c && !o.l && !o.q) res += pre + (o.n ? (i + 1) + ':' : '') + l + '\n';
+          }
+        });
+        if (o.c) res += pre + c + '\n';
+        if (o.l && c) res += f + '\n';
+        if (c) hit = true;
+      });
+      if (!hit) io.status = 1;
+      return res;
+    },
+    groups: function () { return 'remus users\n'; },
+    head: function (a, io) { var o = getopt(a, 'n'); return join(lines(readAll(o._, io, 'head')).slice(0, num(o.n, 10))); },
+    hostname: function (a) { var o = getopt(a); return (o.s ? 'lazar' : o.d ? 'info' : 'lazar.info') + '\n'; },
+    id: function () { return 'uid=1000(remus) gid=1000(remus) groups=1000(remus),100(users)\n'; },
+    login: function (a, io, name) { io.err(name + ': must be suid to work properly'); },
+    logname: function () { return 'remus\n'; },
+    ls: function (a, io) {
+      var o = getopt(a), ops = o._.length ? o._ : ['.'], files = [], dirs = [], res = '';
+      ops.forEach(function (p) {
+        var n = lookup(p, o.l);
+        if (!n) io.err('ls: ' + p + ': No such file or directory');
+        else if (n.t === 'd' && !o.d) dirs.push([p, n]);
+        else files.push([p, n]);
+      });
+      function list(e) {
+        if (o.t) e.sort(function (x, y) { return y[1].time - x[1].time; });
+        if (o.r) e.reverse();
+        if (o.l) { io.table = true; return join(e.map(function (x) { return long(x[0], x[1]); })); }
+        return e.map(function (x) { return paint(x[0] + (x[1].t === 'd' ? '/' : ''), x[1]); }).join(io.tty && !o['1'] ? '  ' : '\n') + '\n';
+      }
+      if (files.length) res = list(files);
+      dirs.forEach(function (d) {
+        if (ops.length > 1) res += (res ? '\n' : '') + d[0] + ':\n';
+        if (denied(d[1])) { io.err('ls: can\'t open \'' + d[0] + '\': Permission denied'); return; }
+        var e = Object.keys(d[1].kids).sort().filter(function (k) { return o.a || o.A || k[0] !== '.'; })
+          .map(function (k) { return [k, d[1].kids[k]]; });
+        if (o.a) e = [['.', d[1]], ['..', d[1]]].concat(e);
+        if (e.length) res += list(e);
+      });
+      return res;
+    },
+    nl: function (a, io) {
+      var n = 0;
+      return join(lines(readAll(getopt(a)._, io, 'nl')).map(function (l) { return l ? lpad(++n, 6) + '\t' + l : l; }));
+    },
+    nologin: function (a, io) { io.status = 1; return 'This account is not available.\n'; },
+    nproc: function () { return (navigator.hardwareConcurrency || 1) + '\n'; },
+    pidof: function (a, io) {
+      var r = procs('pidof').filter(function (p) { return a.indexOf(p[3].split(' ')[0].replace(/^-/, '')) >= 0; });
+      if (!r.length) io.status = 1;
+      return r.length ? r.map(function (p) { return p[0]; }).join(' ') + '\n' : '';
+    },
+    printf: function (a) {
+      var i = 1;
+      return escapes(a[0] || '').replace(/%([sdi%])/g, function (m, t) {
+        if (t === '%') return '%';
+        var v = a[i++];
+        return t === 's' ? (v === undefined ? '' : v) : String(parseInt(v, 10) || 0);
+      });
+    },
+    ps: function (a, io, name) {
+      io.table = true;
+      return join([['PID', 'USER', 'TIME', 'COMMAND']].concat(procs(name)).map(function (p) {
+        return lpad(p[0], 5) + ' ' + rpad(p[1], 8) + ' ' + lpad(p[2], 6) + ' ' + p[3];
+      }));
+    },
+    pwd: function () { return cwd + '\n'; },
+    readlink: function (a, io) {
+      var o = getopt(a), p = o._[0] || '', n = lookup(p, true);
+      if (n && o.f) return abs(p) + '\n';
+      if (!n || n.t !== 'l') { io.status = 1; return; }
+      return n.to + '\n';
+    },
+    realpath: function (a, io) {
+      return join(a.filter(function (p) {
+        if (lookup(p)) return true;
+        io.err('realpath: ' + p + ': No such file or directory');
+      }).map(abs));
+    },
+    rev: function (a, io) {
+      return join(lines(readAll(getopt(a)._, io, 'rev')).map(function (l) { return l.split('').reverse().join(''); }));
+    },
+    sed: function (a, io) {
+      var o = getopt(a, 'e'), script = o.e !== undefined ? o.e : o._.shift() || '', re;
+      var m = /^s(.)(.*?)\1(.*?)\1([gi]*)$/.exec(script);
+      if (!m) { io.err('sed: unsupported command ' + script); return; }
+      try { re = new RegExp(o.E || o.r ? m[2] : bre(m[2]), m[4]); } catch (e) { io.err('sed: bad regex \'' + m[2] + '\''); return; }
+      // & is the match and \1 a group in sed, $& and $1 in JS.
+      var rep = m[3].replace(/\$/g, '$$$$').replace(/\\(\d)|\\&|&|\\n/g, function (x, d) {
+        return d ? '$' + d : x === '\\&' ? '&' : x === '&' ? '$&' : '\n';
+      });
+      return join(lines(readAll(o._, io, 'sed')).map(function (l) { return l.replace(re, rep); }));
+    },
+    seq: function (a, io) {
+      var n = a.map(Number), first = n.length > 1 ? n[0] : 1, inc = n.length > 2 ? n[1] : 1, last = n[n.length - 1], s = '';
+      if (!n.length || n.some(isNaN)) { io.err('seq: invalid number'); return; }
+      for (var x = first, k = 0; (inc > 0 ? x <= last : x >= last) && k < 1000; x += inc, k++) s += x + '\n';
+      return s;
+    },
+    sh: function (a) { if (a[0] === '-c' && a[1]) shell(a[1]); },
+    shuf: function (a, io) {
+      var l = lines(readAll(getopt(a)._, io, 'shuf'));
+      for (var i = l.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = l[i]; l[i] = l[j]; l[j] = t; }
+      return join(l);
+    },
+    sleep: function () {},
+    sort: function (a, io) {
+      var o = getopt(a), l = lines(readAll(o._, io, 'sort'));
+      l.sort(function (x, y) {
+        if (o.n) return (parseFloat(x) || 0) - (parseFloat(y) || 0);
+        if (o.f) { x = x.toLowerCase(); y = y.toLowerCase(); }
+        return x < y ? -1 : x > y ? 1 : 0;
+      });
+      if (o.r) l.reverse();
+      if (o.u) l = l.filter(function (x, i) { return !i || x !== l[i - 1]; });
+      return join(l);
+    },
+    sync: function () {},
+    tac: function (a, io) { return join(lines(readAll(getopt(a)._, io, 'tac')).reverse()); },
+    tail: function (a, io) {
+      var o = getopt(a, 'n'), l = lines(readAll(o._, io, 'tail'));
+      return join(l.slice(Math.max(0, l.length - num(o.n, 10))));
+    },
+    tee: function (a, io) {
+      getopt(a)._.forEach(function (f) { io.err('tee: ' + f + ': Read-only file system'); });
+      return io.stdin || '';
+    },
+    tr: function (a, io) {
+      var o = getopt(a);
+      function set(s) {
+        return escapes(s || '').replace(/\[:(\w+):\]/g, function (m, c) {
+          return { lower: 'a-z', upper: 'A-Z', digit: '0-9', alpha: 'a-zA-Z', alnum: 'a-zA-Z0-9', space: ' \t\n' }[c] || '';
+        }).replace(/(.)-(.)/g, function (m, x, y) {
+          for (var r = '', c = x.charCodeAt(0); c <= y.charCodeAt(0); c++) r += String.fromCharCode(c);
+          return r;
+        });
+      }
+      var s1 = set(o._[0]), s2 = set(o._[1]);
+      return (io.stdin || '').split('').map(function (c) {
+        var i = s1.indexOf(c);
+        return i < 0 ? c : o.d ? '' : s2 ? s2[Math.min(i, s2.length - 1)] : c;
+      }).join('');
+    },
+    'true': function () {},
+    tty: function () { return '/dev/pts/0\n'; },
+    uniq: function (a, io) {
+      var o = getopt(a), r = [], l = lines(readAll(o._, io, 'uniq'));
+      for (var i = 0; i < l.length; i++) {
+        var n = 1;
+        while (i + 1 < l.length && l[i + 1] === l[i]) { n++; i++; }
+        if (o.d && n < 2 || o.u && n > 1) continue;
+        r.push(o.c ? lpad(n, 7) + ' ' + l[i] : l[i]);
+      }
+      return join(r);
+    },
+    usleep: function () {},
+    wc: function (a, io) {
+      var o = getopt(a), all = !o.l && !o.w && !o.c && !o.m;
+      return (o._.length ? o._ : [null]).map(function (f) {
+        var t = f === null ? io.stdin || '' : read(f, 'wc', io), r = [];
+        if (t === null) return '';
+        if (all || o.l) r.push((t.match(/\n/g) || []).length);
+        if (all || o.w) r.push((t.match(/\S+/g) || []).length);
+        if (all || o.c || o.m) r.push(bytes(t));
+        return r.map(function (x) { return lpad(x, 7); }).join(' ') + (f === null ? '' : ' ' + f) + '\n';
+      }).join('');
+    },
+    which: function (a, io) {
+      var r = a.filter(function (x) { return x === 'busybox' || BUSYBOX.indexOf(x) >= 0; });
+      if (r.length < a.length) io.status = 1;
+      return join(r.map(function (x) { return '/bin/' + x; }));
+    },
+    who: function () {
+      var d = login;
+      return 'remus    tty1         1972-08-21 00:15\nremus    pts/0        ' + d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' +
+        two(d.getDate()) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes()) + '\n';
+    },
+    yes: function (a, io) {
+      var s = (a.length ? a.join(' ') : 'y') + '\n';
+      return Array(io.tty ? 11 : 1001).join(s) + (io.tty ? '^C\n' : '');
+    }
   };
+  commands.egrep = commands.fgrep = commands.grep;
+  commands.less = commands.more = commands.cat;
+  commands.ash = commands.sh;
+  commands.top = commands.ps;
+  commands.vim = commands.vi;
+  commands[':wq'] = commands[':q!'] = commands[':q'];
+  commands.logout = commands.exit;
+  commands.passwd = commands.su = commands.login;
   Object.keys(links).forEach(function (k) {
-    commands[k] = function () {
+    commands[k] = function (a, io) {
+      if (!io.tty) return links[k] + '\n';
       print('opening <a href="' + links[k] + '">' + links[k] + '</a> ...');
       window.open(links[k], '_blank', 'noopener');
     };
   });
+  commands['dev.to'] = commands.devto;
 
   form.addEventListener('submit', function (e) {
     e.preventDefault();
@@ -313,19 +983,61 @@ I write about AI-assisted development and what it does to the way teams work, wi
     input.value = '';
     hint.classList.add('hidden');
     if (!raw) return;
-    print('<span class="ps1">remus@lazar.info:<b>~</b>$</span> ' + esc(raw));
-    var c = raw.toLowerCase().replace(/^sudo\s.*/, 'sudo').replace(/^dev\.to$/, 'devto')
-      .replace(/^ls( -\w+)? +(~\/)?writing\/?$/, 'posts').replace(/^ls( -\w+)? +(~\/)?workbench\/?$/, 'workbench');
-    // Commands get their options; whatever else a command does not know is
-    // ignored, as with ls -la or vi draft.md.
-    var opts = '';
-    if (!commands[c]) { opts = (c.match(/\s-\S*/g) || []).join(''); c = c.split(/\s+/)[0]; }
-    if (commands[c]) commands[c](opts);
-    else print('bash: ' + esc(raw.split(/\s+/)[0]) + ': command not found. Try <span class="y">help</span>.');
+    hist.push(raw);
+    hpos = hist.length;
+    print(ps1() + esc(raw));
+    // The intro's ls of ~/writing and ~/workbench answer the way the page shows them.
+    var m = /^ls(\s+-\w+)*\s+(~\/)?writing\/?(\s*\|\s*head\s+-(?:n\s*)?(\d+))?$/.exec(raw);
+    if (m && (m[2] || cwd === HOME)) commands.posts([m[4]], { tty: true });
+    else if ((m = /^ls(\s+-\w+)*\s+(~\/)?workbench\/?$/.exec(raw)) && (m[2] || cwd === HOME)) commands.workbench([], { tty: true });
+    else shell(raw);
+    label.textContent = tilde(cwd);
     window.scrollTo(0, document.body.scrollHeight);
+  });
+  // Up and down walk through the history, as in a shell.
+  input.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    hpos = Math.max(0, Math.min(hist.length, hpos + (e.key === 'ArrowUp' ? -1 : 1)));
+    input.value = hist[hpos] || '';
   });
   input.addEventListener('focus', function () { cur.classList.add('hidden'); });
   input.addEventListener('blur', function () { cur.classList.remove('hidden'); });
+
+  // Tab completes the word at the cursor, as in a shell: one match fills in,
+  // several fill in what they share and a second Tab lists them. On an empty
+  // prompt Tab moves the focus on as usual, so keyboard users can leave.
+  var tabbed = null;
+  // Commands where a command starts, paths everywhere else (and for a first
+  // word with a /); a leading ~ stays as typed.
+  function completions(before, word) {
+    if ((!before.trim() || /[|;&]\s*$/.test(before)) && word.indexOf('/') < 0)
+      return Object.keys(commands).concat(BUSYBOX).filter(function (k) { return /^[\w.-]+$/.test(k); });
+    var i = word.lastIndexOf('/'), dir = word.slice(0, i + 1), n = lookup(dir.replace(/^~(?=\/)/, HOME) || '.');
+    if (!n || n.t !== 'd' || denied(n)) return [];
+    return Object.keys(n.kids).filter(function (k) { return k[0] !== '.' || word[i + 1] === '.'; })
+      .map(function (k) { return dir + k + (n.kids[k].t === 'd' ? '/' : ''); });
+  }
+  input.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || !input.value.trim()) return;
+    e.preventDefault();
+    var at = input.selectionStart, before = input.value.slice(0, at), word = /\S*$/.exec(before)[0];
+    before = before.slice(0, before.length - word.length);
+    var m = completions(before, word).filter(function (c, i, all) { return c.indexOf(word) === 0 && all.indexOf(c) === i; }).sort();
+    if (!m.length) return;
+    var common = m.reduce(function (p, c) { while (c.indexOf(p) !== 0) p = p.slice(0, -1); return p; });
+    var fill = m.length === 1 && !/\/$/.test(m[0]) ? m[0] + ' ' : common;
+    if (fill !== word) {
+      input.value = before + fill + input.value.slice(at);
+      input.setSelectionRange(before.length + fill.length, before.length + fill.length);
+    } else if (m.length > 1 && tabbed === input.value) {
+      hint.classList.add('hidden');
+      print(ps1() + esc(input.value));
+      print(esc(m.join('  ')));
+      window.scrollTo(0, document.body.scrollHeight);
+    }
+    tabbed = input.value;
+  });
 
   // The prompt takes the keyboard once it shows, unless the visitor has put
   // focus elsewhere, and keys typed anywhere on the page land in it. Touch
