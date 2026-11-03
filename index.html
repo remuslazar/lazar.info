@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Remus Lazar</title>
-<meta name="description" content="Remus Lazar, CTO at EV Freaks. Writing about AI-assisted development and what it does to the way teams work.">
+<meta name="description" content="Remus Lazar, co-CEO of cron IT and CTO of EV Freaks. Software architect and maker: ESP32, Raspberry Pi, 3D printing, EVs. Writing about AI-assisted development.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23ffffff' stroke='%23d0d7de'/%3E%3Cpath d='M3 4l4 4-4 4' stroke='%231a7f37' stroke-width='2' fill='none'/%3E%3Crect x='8' y='11' width='5' height='2' fill='%231a7f37'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -63,6 +63,7 @@
   h1 { font: inherit; margin: 0; color: var(--fg); font-weight: bold; }
   ul { list-style: none; margin: 0; padding: 0; }
   li { display: grid; grid-template-columns: 7.5em 1fr; gap: 0 1em; }
+  ul.dirs li { grid-template-columns: 8.5em 1fr; }
   li .sub { grid-column: 2; color: var(--dim); }
   @media (max-width: 560px) {
     body { font-size: 13.5px; padding: 16px; }
@@ -95,13 +96,26 @@
     <section class="block">
       <div class="line"><span class="ps1">remus@lazar.info:<b>~</b>$</span> <span class="cmd">whoami</span></div>
       <h1 class="line">Remus Lazar</h1>
-      <div class="line">CTO at <span class="y">EV Freaks</span>, building <span class="y">chargEV FleX</span>. Stuttgart, Germany.</div>
+      <div class="line">Co-CEO of <span class="y">cron IT</span> and CTO of <span class="y">EV Freaks</span>, building <span class="y">ChargEV FleX</span>. Stuttgart, Germany.</div>
     </section>
 
     <section class="block">
       <div class="line"><span class="ps1">remus@lazar.info:<b>~</b>$</span> <span class="cmd">cat about.txt</span></div>
-      <div class="line">I write about AI-assisted development and what it does to the way teams work, with numbers from my own commit history.
-After hours: Home Assistant, EVs and Raspberry Pis.</div>
+      <div class="line">Software architect. Computer science &amp; electrical engineering at the University of Stuttgart.
+Co-founded cron IT in 2002: web projects and hosting, run by its owners. At EV Freaks, chargEV started as an app built after hours; today it is ChargEV FleX, and we are an e-mobility provider ourselves.
+I write about AI-assisted development and what it does to the way teams work, with numbers from my own commit history.</div>
+    </section>
+
+    <section class="block">
+      <div class="line"><span class="ps1">remus@lazar.info:<b>~</b>$</span> <span class="cmd">ls ~/workbench</span></div>
+      <ul class="dirs" id="workbench">
+        <li><span class="m">esp32/</span><span>ESPHome and LVGL: wall panels, sensors, displays</span></li>
+        <li><span class="m">raspberry-pi/</span><span>kiosk screens and an AirPlay receiver</span></li>
+        <li><span class="m">3d-printing/</span><span>housings and mounts, designed in Onshape</span></li>
+        <li><span class="m">hardware/</span><span>soldering, hacking, building things</span></li>
+        <li><span class="m">smart-home/</span><span>Home Assistant, all local</span></li>
+        <li><span class="m">ev/</span><span>early adopter: a Nissan Leaf since 2015, now also a Tesla Model S; <a href="https://github.com/remuslazar/homeassistant-carwings">homeassistant-carwings</a> brings the Leaf into Home Assistant</span></li>
+      </ul>
     </section>
 
     <section class="block">
@@ -118,6 +132,8 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
     <section class="block">
       <div class="line"><span class="ps1">remus@lazar.info:<b>~</b>$</span> <span class="cmd">ls -l ~/links</span></div>
       <ul class="kv">
+        <li><span class="m">cron</span><a href="https://cron.eu">cron.eu</a></li>
+        <li><span class="m">evfreaks</span><a href="https://ev-freaks.com">ev-freaks.com</a></li>
         <li><span class="m">medium</span><a href="https://medium.com/@remuslazar" rel="me">medium.com/@remuslazar</a></li>
         <li><span class="m">linkedin</span><a href="https://www.linkedin.com/in/remuslazar/" rel="me">linkedin.com/in/remuslazar</a></li>
         <li><span class="m">x</span><a href="https://x.com/RemusLazar" rel="me">x.com/RemusLazar</a></li>
@@ -149,6 +165,8 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
   var skipped = false;
 
   var links = {
+    cron: 'https://cron.eu',
+    evfreaks: 'https://ev-freaks.com',
     medium: 'https://medium.com/@remuslazar',
     linkedin: 'https://www.linkedin.com/in/remuslazar/',
     x: 'https://x.com/RemusLazar',
@@ -218,7 +236,8 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
   var help = [
     ['whoami', 'who is this'],
     ['ls', 'list the files'],
-    ['posts', 'list all posts']
+    ['posts', 'list all posts'],
+    ['workbench', 'what I build after hours']
   ].concat(Object.keys(links).map(function (k) {
     return [k, 'open ' + links[k].replace(/^https:\/\/(www\.)?|\/$/g, '')];
   }), [
@@ -248,7 +267,12 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
       out.appendChild(ul);
     },
     whoami: function () { print('Remus Lazar. Mostly harmless.'); },
-    ls: function () { print('<span class="m">writing/</span>  <span class="m">links/</span>  about.txt'); },
+    ls: function () { print('about.txt  <span class="m">links/</span>  <span class="m">workbench/</span>  <span class="m">writing/</span>'); },
+    workbench: function () {
+      var ul = document.getElementById('workbench').cloneNode(true);
+      ul.removeAttribute('id');
+      out.appendChild(ul);
+    },
     date: function () { print(new Date().toString()); },
     uname: function (opts) {
       if (!/\s-(-all|[a-z]*a)/.test(opts)) { print('RemusOS'); return; }
@@ -289,7 +313,7 @@ After hours: Home Assistant, EVs and Raspberry Pis.</div>
     if (!raw) return;
     print('<span class="ps1">remus@lazar.info:<b>~</b>$</span> ' + esc(raw));
     var c = raw.toLowerCase().replace(/^sudo\s.*/, 'sudo').replace(/^dev\.to$/, 'devto')
-      .replace(/^ls( -\w+)? +(~\/)?writing\/?$/, 'posts');
+      .replace(/^ls( -\w+)? +(~\/)?writing\/?$/, 'posts').replace(/^ls( -\w+)? +(~\/)?workbench\/?$/, 'workbench');
     // Commands get their options; whatever else a command does not know is
     // ignored, as with ls -la or vi draft.md.
     var opts = '';
