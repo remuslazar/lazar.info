@@ -1008,9 +1008,15 @@ I write about AI-assisted development and what it does to the way teams work, wi
   // several fill in what they share and a second Tab lists them. On an empty
   // prompt Tab moves the focus on as usual, so keyboard users can leave.
   var tabbed = null;
-  function completions(before) {
-    if (before.trim()) return ['about.txt', 'links/', 'workbench/', 'writing/', '~/links/', '~/workbench/', '~/writing/'];
-    return Object.keys(commands).filter(function (k) { return /^[\w.-]+$/.test(k); });
+  // Commands where a command starts, paths everywhere else (and for a first
+  // word with a /); a leading ~ stays as typed.
+  function completions(before, word) {
+    if ((!before.trim() || /[|;&]\s*$/.test(before)) && word.indexOf('/') < 0)
+      return Object.keys(commands).concat(BUSYBOX).filter(function (k) { return /^[\w.-]+$/.test(k); });
+    var i = word.lastIndexOf('/'), dir = word.slice(0, i + 1), n = lookup(dir.replace(/^~(?=\/)/, HOME) || '.');
+    if (!n || n.t !== 'd' || denied(n)) return [];
+    return Object.keys(n.kids).filter(function (k) { return k[0] !== '.' || word[i + 1] === '.'; })
+      .map(function (k) { return dir + k + (n.kids[k].t === 'd' ? '/' : ''); });
   }
   input.addEventListener('keydown', function (e) {
     if (e.key !== 'Tab' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || !input.value.trim()) return;
@@ -1026,7 +1032,7 @@ I write about AI-assisted development and what it does to the way teams work, wi
       input.setSelectionRange(before.length + fill.length, before.length + fill.length);
     } else if (m.length > 1 && tabbed === input.value) {
       hint.classList.add('hidden');
-      print('<span class="ps1">remus@lazar.info:<b>~</b>$</span> ' + esc(input.value));
+      print(ps1() + esc(input.value));
       print(esc(m.join('  ')));
       window.scrollTo(0, document.body.scrollHeight);
     }
