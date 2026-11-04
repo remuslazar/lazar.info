@@ -27,7 +27,7 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html 404.html CNAME _site/
-          # Tesla Fleet (Home Assistant on odroid4) reads the public key here.
+          # Tesla Fleet (Home Assistant) reads the public key here.
           cp -R .well-known _site/
 
       - name: Fetch Medium posts
